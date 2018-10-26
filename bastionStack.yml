@@ -1,0 +1,198 @@
+Resources:
+  # bastion & private EC2 instances
+  BastionNode:
+    Type: AWS::EC2::Instance
+    Properties:
+      Tags:
+        - Key: Name
+          Value: bastion
+      ImageId: ami-0fca02518e0faeb84
+      InstanceType: t2.micro
+      SubnetId:
+        Ref: PublicSubnet
+      AvailabilityZone: ap-southeast-1a
+      KeyName: MyKeyPair
+      SecurityGroupIds:
+        - Ref: PublicSecurityGroup
+    DependsOn:
+      - PublicSecurityGroup
+      - PublicSubnet
+
+  PrivateNode:
+    Type: AWS::EC2::Instance
+    Properties:
+      Tags:
+        - Key: Name
+          Value: private
+      ImageId: ami-0fca02518e0faeb84
+      InstanceType: t2.micro
+      SubnetId:
+        Ref: PrivateSubnet
+      AvailabilityZone: ap-southeast-1a
+      KeyName: MyKeyPair
+      SecurityGroupIds:
+        - Ref: PrivateSecurityGroup
+    DependsOn:
+      - PrivateSecurityGroup
+      - PrivateSubnet
+
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+
+  # public/private subnets
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      VpcId:
+        Ref: VPC
+      AvailabilityZone: ap-southeast-1a
+    DependsOn: VPC
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.1.0/24
+      VpcId:
+        Ref: VPC
+      AvailabilityZone: ap-southeast-1a
+    DependsOn: VPC
+
+  # security group
+  PublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Bastion node
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 22
+          IpProtocol: TCP
+          ToPort: 22
+      VpcId:
+        Ref: VPC
+    DependsOn: VPC
+
+  PrivateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Private node
+      SecurityGroupIngress:
+        - CidrIp: 10.0.0.0/16
+          FromPort: 22
+          IpProtocol: TCP
+          ToPort: 22
+      VpcId:
+        Ref: VPC
+    DependsOn: VPC
+
+  # public internet gateway & route table
+  PublicInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  PublicInternetGatewayAssociation:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        Ref: PublicInternetGateway
+      VpcId:
+        Ref: VPC
+    DependsOn:
+      - PublicInternetGateway
+      - VPC
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+    DependsOn: VPC
+
+  PublicRouteToInternet:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: PublicInternetGateway
+      RouteTableId:
+        Ref: PublicRouteTable
+    DependsOn:
+      - PublicRouteTable
+      - PublicInternetGateway
+
+  PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable
+      SubnetId:
+        Ref: PublicSubnet
+    DependsOn:
+      - PublicRouteTable
+      - PublicSubnet
+
+  # private NAT gateway & route table
+  PrivateNatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId:
+        Ref: PublicSubnet
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+
+  PrivateRouteToInternet:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      RouteTableId:
+        Ref: PrivateRouteTable
+      NatGatewayId:
+        Ref: PrivateNatGateway
+
+  PrivateRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PrivateRouteTable
+      SubnetId:
+        Ref: PrivateSubnet
+    DependsOn:
+      - PrivateRouteTable
+      - PrivateSubnet
+
+  # EIP for bastion node
+  PublicElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId:
+        Ref: BastionNode
+    DependsOn: BastionNode
+
+  PublicEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      EIP:
+        Ref: PublicElasticIp
+      InstanceId:
+        Ref: BastionNode
+    DependsOn: PublicElasticIp
+
+  # EIP for NAT gateway
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: PublicInternetGatewayAssociation
+    Properties:
+      Domain: vpc
+
+Outputs:
+  BastionNodeEIP:
+    Value: !GetAtt BastionNode.PublicIp
+  PrivateNodeIP:
+    Value: !GetAtt PrivateNode.PrivateIp
